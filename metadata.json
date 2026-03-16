@@ -1,5 +1,5 @@
 {
-  "name": "OmniNote",
-  "description": "A powerful, responsive note-taking app with recurring due dates, custom filters, and seamless mobile/web navigation.",
+  "name": "Focuss",
+  "description": "A powerful, offline-first note-taking app with recurring due dates, custom filters, and seamless mobile/web navigation.",
   "requestFramePermissions": []
 }
