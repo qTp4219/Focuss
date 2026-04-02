@@ -1,75 +1,209 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  setDoc,
+  getDoc,
+  orderBy,
+  serverTimestamp,
+  Timestamp
+} from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { db, auth } from './firebase';
 import { Note, Filter, ViewType, DueDate } from './types';
 import { INITIAL_NOTES, INITIAL_FILTERS, INITIAL_CATEGORIES, INITIAL_TAGS } from './constants';
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 export function useOmniNote() {
-  const [notes, setNotes] = useState<Note[]>(() => {
-    const saved = localStorage.getItem('omninote_notes');
-    return saved ? JSON.parse(saved) : INITIAL_NOTES;
-  });
-
-  const [filters, setFilters] = useState<Filter[]>(() => {
-    const saved = localStorage.getItem('omninote_filters');
-    return saved ? JSON.parse(saved) : INITIAL_FILTERS;
-  });
-
-  const [categories, setCategories] = useState<string[]>(() => {
-    const saved = localStorage.getItem('omninote_categories');
-    return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
-  });
-
-  const [tags, setTags] = useState<string[]>(() => {
-    const saved = localStorage.getItem('omninote_tags');
-    return saved ? JSON.parse(saved) : INITIAL_TAGS;
-  });
-
-  const [starredViews, setStarredViews] = useState<ViewType[]>(() => {
-    const saved = localStorage.getItem('omninote_starred');
-    return saved ? JSON.parse(saved) : [];
-  });
-
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [filters, setFilters] = useState<Filter[]>([]);
+  const [categories, setCategories] = useState<string[]>(INITIAL_CATEGORIES);
+  const [tags, setTags] = useState<string[]>(INITIAL_TAGS);
+  const [starredViews, setStarredViews] = useState<ViewType[]>([]);
   const [currentView, setCurrentView] = useState<ViewType>('today');
 
+  // Auth Listener
   useEffect(() => {
-    localStorage.setItem('omninote_starred', JSON.stringify(starredViews));
-  }, [starredViews]);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
 
+  // Firestore Sync: Notes
   useEffect(() => {
-    localStorage.setItem('omninote_notes', JSON.stringify(notes));
-  }, [notes]);
+    if (!user) {
+      setNotes([]);
+      return;
+    }
 
+    const q = query(
+      collection(db, 'notes'), 
+      where('uid', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notesData = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id,
+      })) as Note[];
+      setNotes(notesData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'notes');
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Firestore Sync: Filters
   useEffect(() => {
-    localStorage.setItem('omninote_filters', JSON.stringify(filters));
-  }, [filters]);
+    if (!user) {
+      setFilters([]);
+      return;
+    }
 
+    const q = query(collection(db, 'filters'), where('uid', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const filtersData = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id,
+      })) as Filter[];
+      setFilters(filtersData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'filters');
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Firestore Sync: User Settings
   useEffect(() => {
-    localStorage.setItem('omninote_categories', JSON.stringify(categories));
-  }, [categories]);
+    if (!user) {
+      setStarredViews([]);
+      setCategories(INITIAL_CATEGORIES);
+      setTags(INITIAL_TAGS);
+      return;
+    }
 
-  useEffect(() => {
-    localStorage.setItem('omninote_tags', JSON.stringify(tags));
-  }, [tags]);
+    const docRef = doc(db, 'users', user.uid, 'settings', 'main');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.starredViews) setStarredViews(data.starredViews);
+        if (data.categories) setCategories(data.categories);
+        if (data.tags) setTags(data.tags);
+      } else {
+        // Initialize settings if they don't exist
+        setDoc(docRef, {
+          starredViews: [],
+          categories: INITIAL_CATEGORIES,
+          tags: INITIAL_TAGS
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/settings/main`));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/settings/main`);
+    });
 
-  const addNote = (note: Omit<Note, 'id' | 'createdAt' | 'completed'>) => {
-    const newNote: Note = {
-      ...note,
-      id: Math.random().toString(36).substr(2, 9),
-      createdAt: new Date().toISOString(),
-      completed: false,
-    };
-    setNotes(prev => [newNote, ...prev]);
+    return () => unsubscribe();
+  }, [user]);
+
+  const addNote = async (note: Omit<Note, 'id' | 'createdAt' | 'completed'>) => {
+    if (!user) return;
+    try {
+      await addDoc(collection(db, 'notes'), {
+        ...note,
+        uid: user.uid,
+        completed: false,
+        createdAt: new Date().toISOString()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'notes');
+    }
   };
 
-  const updateNote = (id: string, updates: Partial<Note>) => {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+  const updateNote = async (id: string, updates: Partial<Note>) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'notes', id), updates);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `notes/${id}`);
+    }
   };
 
-  const deleteNote = (id: string) => {
-    setNotes(prev => prev.filter(n => n.id !== id));
+  const deleteNote = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'notes', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `notes/${id}`);
+    }
   };
 
-  const toggleComplete = (id: string) => {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, completed: !n.completed } : n));
+  const toggleComplete = async (id: string) => {
+    const note = notes.find(n => n.id === id);
+    if (!note) return;
+    await updateNote(id, { completed: !note.completed });
   };
 
   const filteredNotes = useMemo(() => {
@@ -85,7 +219,6 @@ export function useOmniNote() {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Check due date
         let isDueToday = false;
         if (note.dueDate) {
           if (note.dueDate.type === 'fixed') {
@@ -99,7 +232,6 @@ export function useOmniNote() {
           }
         }
 
-        // Check deadline
         let isDeadlineToday = false;
         if (note.deadline) {
           const d = new Date(note.deadline);
@@ -132,20 +264,28 @@ export function useOmniNote() {
     });
   }, [notes, currentView, filters]);
 
-  const toggleStar = (view: ViewType) => {
-    setStarredViews(prev => {
-      const exists = prev.some(v => {
-        if (typeof v === 'string' && typeof view === 'string') return v === view;
-        if (typeof v === 'object' && typeof view === 'object') {
-          if (v.type !== view.type) return false;
-          if (v.type === 'filter') return v.id === (view as any).id;
-          if (v.type === 'category' || v.type === 'tag') return v.value === (view as any).value;
-        }
-        return false;
-      });
+  const updateUserSettings = async (updates: Partial<{ starredViews: ViewType[], categories: string[], tags: string[] }>) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'settings', 'main'), updates);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/settings/main`);
+    }
+  };
 
-      if (exists) {
-        return prev.filter(v => {
+  const toggleStar = (view: ViewType) => {
+    const exists = starredViews.some(v => {
+      if (typeof v === 'string' && typeof view === 'string') return v === view;
+      if (typeof v === 'object' && typeof view === 'object') {
+        if (v.type !== view.type) return false;
+        if (v.type === 'filter') return v.id === (view as any).id;
+        if (v.type === 'category' || v.type === 'tag') return v.value === (view as any).value;
+      }
+      return false;
+    });
+
+    const newStarred = exists 
+      ? starredViews.filter(v => {
           if (typeof v === 'string' && typeof view === 'string') return v !== view;
           if (typeof v === 'object' && typeof view === 'object') {
             if (v.type !== view.type) return true;
@@ -153,10 +293,10 @@ export function useOmniNote() {
             if (v.type === 'category' || v.type === 'tag') return v.value !== (view as any).value;
           }
           return true;
-        });
-      }
-      return [...prev, view];
-    });
+        })
+      : [...starredViews, view];
+    
+    updateUserSettings({ starredViews: newStarred });
   };
 
   const isStarred = (view: ViewType) => {
@@ -172,6 +312,8 @@ export function useOmniNote() {
   };
 
   return {
+    user,
+    isAuthReady,
     notes,
     filteredNotes,
     filters,
@@ -184,14 +326,19 @@ export function useOmniNote() {
     updateNote,
     deleteNote,
     toggleComplete,
-    setCategories,
-    setTags,
-    setFilters,
-    updateFilter: (id: string, updates: Partial<Filter>) => {
-      setFilters(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+    setCategories: (c: string[]) => updateUserSettings({ categories: c }),
+    setTags: (t: string[]) => updateUserSettings({ tags: t }),
+    addFilter: async (f: Omit<Filter, 'id' | 'uid'>) => {
+      if (!user) return;
+      await addDoc(collection(db, 'filters'), { ...f, uid: user.uid });
     },
-    deleteFilter: (id: string) => {
-      setFilters(prev => prev.filter(f => f.id !== id));
+    updateFilter: async (id: string, updates: Partial<Filter>) => {
+      if (!user) return;
+      await updateDoc(doc(db, 'filters', id), updates);
+    },
+    deleteFilter: async (id: string) => {
+      if (!user) return;
+      await deleteDoc(doc(db, 'filters', id));
     },
     toggleStar,
     isStarred

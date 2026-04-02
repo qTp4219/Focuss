@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "Note": {
+      "title": "Note",
+      "description": "A single note item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "dueDate": { "type": "object" },
+        "deadline": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "uid": { "type": "string" }
+      },
+      "required": ["title", "content", "uid", "createdAt"]
+    },
+    "Filter": {
+      "title": "Filter",
+      "description": "A custom filter for notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "conditions": { "type": "object" },
+        "uid": { "type": "string" }
+      },
+      "required": ["name", "conditions", "uid"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User-specific settings and preferences",
+      "type": "object",
+      "properties": {
+        "starredViews": { "type": "array" },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "firestore": {
+    "/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Collection of notes"
+    },
+    "/filters/{filterId}": {
+      "schema": "Filter",
+      "description": "Collection of custom filters"
+    },
+    "/users/{userId}/settings/main": {
+      "schema": "UserSettings",
+      "description": "User-specific settings"
+    }
+  }
+}

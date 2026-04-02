@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: notes
+    // Fields:
+    //   - title: string (required, 1-100 chars)
+    //   - content: string (required, 0-5000 chars)
+    //   - category: string (optional)
+    //   - tags: list of strings (optional)
+    //   - dueDate: map (optional)
+    //   - deadline: string (optional, ISO date)
+    //   - completed: bool (required)
+    //   - createdAt: string (required, ISO date)
+    //   - uid: string (required, matches auth.uid)
+    //
+    // Collection: filters
+    // Fields:
+    //   - name: string (required, 1-50 chars)
+    //   - conditions: map (required)
+    //   - uid: string (required, matches auth.uid)
+    //
+    // Collection: users/{userId}/settings/main
+    // Fields:
+    //   - starredViews: list (optional)
+    //   - categories: list of strings (optional)
+    //   - tags: list of strings (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)/settings/main).data.role == 'admin' ||
+          (request.auth.token.email == "quocphientruong@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidNote(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.content is string && data.content.size() <= 5000 &&
+             data.completed is bool &&
+             data.createdAt is string &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidFilter(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.conditions is map &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidSettings(data) {
+      return (!('categories' in data) || data.categories is list) &&
+             (!('tags' in data) || data.tags is list) &&
+             (!('starredViews' in data) || data.starredViews is list);
+    }
+
+    // Rules
+    match /notes/{noteId} {
+      allow read: if isOwner(resource.data.uid);
+      allow create: if isAuthenticated() && isValidNote(request.resource.data);
+      allow update: if isOwner(resource.data.uid) && isValidNote(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isOwner(resource.data.uid);
+    }
+
+    match /filters/{filterId} {
+      allow read: if isOwner(resource.data.uid);
+      allow create: if isAuthenticated() && isValidFilter(request.resource.data);
+      allow update: if isOwner(resource.data.uid) && isValidFilter(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid;
+      allow delete: if isOwner(resource.data.uid);
+    }
+
+    match /users/{userId}/settings/main {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidSettings(request.resource.data);
+    }
+  }
+}

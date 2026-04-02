@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Component } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { 
   Inbox, 
@@ -17,10 +17,65 @@ import {
   Repeat,
   Star,
   ChevronDown,
-  Pencil
+  Pencil,
+  LogOut,
+  LogIn,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { useOmniNote } from './useOmniNote';
 import { ViewType, Note, DueDate, Filter, DueDateType } from './types';
+import { signInWithGoogle, logout } from './firebase';
+
+class ErrorBoundary extends Component<any, any> {
+  state: any;
+  props: any;
+
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let message = "Something went wrong.";
+      try {
+        const errInfo = JSON.parse(this.state.error?.message || "");
+        if (errInfo.error) message = `Firestore Error: ${errInfo.error} (${errInfo.operationType})`;
+      } catch (e) {
+        message = this.state.error?.message || message;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6 bg-zinc-50">
+          <div className="max-w-md w-full bg-white p-8 rounded-[32px] shadow-xl text-center">
+            <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertCircle size={32} />
+            </div>
+            <h2 className="text-2xl font-bold mb-2">Application Error</h2>
+            <p className="text-zinc-500 text-sm mb-8">{message}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-black text-white py-4 rounded-2xl font-bold shadow-lg hover:shadow-black/20 transition-all"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const SidebarItem = ({ 
   icon: Icon, 
@@ -177,6 +232,8 @@ const NoteCard = ({ note, onToggle, onDelete, onEdit }: { note: Note, onToggle: 
 
 export default function App() {
   const { 
+    user,
+    isAuthReady,
     filteredNotes, 
     notes,
     filters, 
@@ -188,9 +245,9 @@ export default function App() {
     deleteNote,
     addNote,
     updateNote,
+    addFilter,
     updateFilter,
     deleteFilter,
-    setFilters,
     toggleStar,
     isStarred,
     starredViews
@@ -316,12 +373,10 @@ export default function App() {
         conditions
       });
     } else {
-      const filter: Filter = {
-        id: Math.random().toString(36).substr(2, 9),
+      addFilter({
         name: newFilter.name,
         conditions
-      };
-      setFilters(prev => [...prev, filter]);
+      });
     }
 
     setNewFilter({ name: '', conditions: { category: '', tags: [], hasDeadline: false, hasDueDate: false } });
@@ -340,8 +395,17 @@ export default function App() {
     return '';
   };
 
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F9F9F8]">
+        <Loader2 className="animate-spin text-zinc-400" size={32} />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#F9F9F8] text-zinc-900 font-sans selection:bg-black selection:text-white flex flex-col md:flex-row">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[#F9F9F8] text-zinc-900 font-sans selection:bg-black selection:text-white flex flex-col md:flex-row">
       {/* Mobile Header */}
       <header className="md:hidden sticky top-0 z-40 bg-white/80 backdrop-blur-md border-bottom border-zinc-100 px-4 py-4 flex items-center justify-between">
         <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-zinc-600">
@@ -374,15 +438,40 @@ export default function App() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-                    <div className="w-4 h-4 border-2 border-white rounded-sm" />
-                  </div>
-                  <span className="font-bold tracking-tight text-lg">OmniNote</span>
+                  <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center text-white font-bold text-lg">F</div>
+                  <span className="font-bold tracking-tight text-lg">Focuss</span>
                 </div>
                 <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-zinc-400">
                   <X size={20} />
                 </button>
               </div>
+
+              {user ? (
+                <div className="flex items-center gap-3 p-3 bg-zinc-50 rounded-2xl">
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName || ''} className="w-10 h-10 rounded-xl" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-10 h-10 bg-zinc-200 rounded-xl flex items-center justify-center text-zinc-500 font-bold">
+                      {user.displayName?.[0] || user.email?.[0]}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold truncate">{user.displayName || 'User'}</p>
+                    <button onClick={() => logout()} className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest hover:text-rose-500 transition-colors flex items-center gap-1">
+                      <LogOut size={10} />
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => signInWithGoogle()}
+                  className="flex items-center gap-3 p-4 bg-zinc-900 text-white rounded-2xl hover:bg-black transition-all active:scale-[0.98] shadow-lg shadow-black/10"
+                >
+                  <LogIn size={20} />
+                  <span className="font-bold text-sm">Sign in with Google</span>
+                </button>
+              )}
 
               <nav className="flex flex-col gap-1">
                 <p className="px-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Main</p>
@@ -914,6 +1003,7 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }
