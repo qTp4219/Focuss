@@ -465,7 +465,13 @@ export default function App() {
                 </div>
               ) : (
                 <button 
-                  onClick={() => signInWithGoogle()}
+                  onClick={async () => {
+                    try {
+                      await signInWithGoogle();
+                    } catch (error: any) {
+                      alert(error.message);
+                    }
+                  }}
                   className="flex items-center gap-3 p-4 bg-zinc-900 text-white rounded-2xl hover:bg-black transition-all active:scale-[0.98] shadow-lg shadow-black/10"
                 >
                   <LogIn size={20} />

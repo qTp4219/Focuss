@@ -70,6 +70,18 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+function cleanData(data: any) {
+  const cleaned = { ...data };
+  Object.keys(cleaned).forEach(key => {
+    if (cleaned[key] === undefined) {
+      delete cleaned[key];
+    } else if (cleaned[key] !== null && typeof cleaned[key] === 'object' && !Array.isArray(cleaned[key])) {
+      cleaned[key] = cleanData(cleaned[key]);
+    }
+  });
+  return cleaned;
+}
+
 export function useOmniNote() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -171,12 +183,13 @@ export function useOmniNote() {
   const addNote = async (note: Omit<Note, 'id' | 'createdAt' | 'completed'>) => {
     if (!user) return;
     try {
-      await addDoc(collection(db, 'notes'), {
+      const data = cleanData({
         ...note,
         uid: user.uid,
         completed: false,
         createdAt: new Date().toISOString()
       });
+      await addDoc(collection(db, 'notes'), data);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'notes');
     }
@@ -185,7 +198,8 @@ export function useOmniNote() {
   const updateNote = async (id: string, updates: Partial<Note>) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, 'notes', id), updates);
+      const data = cleanData(updates);
+      await updateDoc(doc(db, 'notes', id), data);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `notes/${id}`);
     }
@@ -267,7 +281,8 @@ export function useOmniNote() {
   const updateUserSettings = async (updates: Partial<{ starredViews: ViewType[], categories: string[], tags: string[] }>) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, 'users', user.uid, 'settings', 'main'), updates);
+      const data = cleanData(updates);
+      await updateDoc(doc(db, 'users', user.uid, 'settings', 'main'), data);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/settings/main`);
     }
@@ -330,11 +345,13 @@ export function useOmniNote() {
     setTags: (t: string[]) => updateUserSettings({ tags: t }),
     addFilter: async (f: Omit<Filter, 'id' | 'uid'>) => {
       if (!user) return;
-      await addDoc(collection(db, 'filters'), { ...f, uid: user.uid });
+      const data = cleanData({ ...f, uid: user.uid });
+      await addDoc(collection(db, 'filters'), data);
     },
     updateFilter: async (id: string, updates: Partial<Filter>) => {
       if (!user) return;
-      await updateDoc(doc(db, 'filters', id), updates);
+      const data = cleanData(updates);
+      await updateDoc(doc(db, 'filters', id), data);
     },
     deleteFilter: async (id: string) => {
       if (!user) return;
